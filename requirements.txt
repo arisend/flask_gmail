@@ -1,0 +1,15 @@
+pygdrive3
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+requests
+psycopg2
+oauth2client
+flask
+pytz
+pygdrive3
+pyngrok
+flask_ngrok
+#pip install --upgrade oauth2client
+google-cloud-pubsub
+google-cloud
