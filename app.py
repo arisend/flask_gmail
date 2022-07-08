@@ -50,7 +50,7 @@ def build_gmail_api_connection():
     return g_mail
 g_mail=build_gmail_api_connection()
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"]="service_credentials.json"
-ngrok.set_auth_token("2BZdTn7M5YETU4xJRvi2lqWRrz5_cBthE4Lo813TgLdtoNhP")
+ngrok.set_auth_token("")
 http_tunnel = ngrok.connect(5000)
 print('test', http_tunnel.public_url)
 #
