@@ -3,8 +3,6 @@ from pyngrok import ngrok
 from flask_ngrok import run_with_ngrok
 from datetime import datetime
 import pytz
-import socket
-socket.setdefaulttimeout(4000)
 import json
 import os.path
 import time
@@ -58,11 +56,14 @@ def get_timestamp():
 
 
 def get_mail_id_from_the_history(last_id):
-    print(last_id)
     results = g_mail.users().history().list(userId='me',startHistoryId=last_id,  labelId="UNREAD", historyTypes=["messageAdded"]).execute()
     print(last_id,results)
     time.sleep(2)
-    return results['history'][-1]['messages'][-1]["id"]
+    try:
+        return results['history'][-1]['messages'][-1]["id"]
+    except:
+        return None
+
 def get_full_message(message_id):
     results=g_mail.users().messages().get(userId='me', id=message_id, format='full').execute()
     print(results)
@@ -179,15 +180,16 @@ def webhook():
         # print(request.query_string)
         # print(request.files)
         text=json.loads(request.data.decode("utf-8"))['message']['data']
+
         historyId=json.loads(base64.b64decode(text).decode())['historyId']
-        print(historyId)
         with open('stored_id.txt', 'r') as f:
             id = f.read()
             if id:
                 try:
                     mail_id = get_mail_id_from_the_history(id)
-                    list_of_saved_files = get_full_message(mail_id)
-                    print(list_of_saved_files)
+                    if mail_id:
+                        list_of_saved_files = get_full_message(mail_id)
+                        print('files',list_of_saved_files)
                 except:
                     http_status = '', 400
                     return http_status

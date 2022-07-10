@@ -14,10 +14,12 @@ ADD subscribe.py /subscribe.py
 RUN chmod 0644 /subscribe.py
 
 #Install Cron
+RUN apt-get update
+RUN apt-get -y install cron
 
 # Add the cron job
 RUN crontab -l | { cat; echo "0 0 * * * python subscribe.py"; } | crontab -
 
 # Run the command on container startup
 CMD cron
-CMD flask app.py
+CMD flask run
