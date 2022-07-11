@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
-from pyngrok import ngrok
-from flask_ngrok import run_with_ngrok
+# from pyngrok import ngrok
+# from flask_ngrok import run_with_ngrok
 from datetime import datetime
 import pytz
 import json
@@ -46,9 +46,9 @@ def build_gmail_api_connection():
     return g_mail
 g_mail=build_gmail_api_connection()
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"]="service_credentials.json"
-ngrok.set_auth_token("")
-http_tunnel = ngrok.connect(5000)
-print('test', http_tunnel.public_url)
+# ngrok.set_auth_token("")
+# http_tunnel = ngrok.connect(5000)
+# print('ngrok domain', http_tunnel.public_url)
 #
 def get_timestamp():
     dt=datetime.now(pytz.timezone('US/Central'))
@@ -165,8 +165,9 @@ def clean(text):
     return "".join(c if c.isalnum() else "_" for c in text)
 
 app = Flask(__name__)
-app.config["BASE_URL"] = http_tunnel.public_url
-run_with_ngrok(app)
+# app.config["BASE_URL"] = http_tunnel.public_url
+
+
 @app.route('/webhook', methods=['POST','GET'])
 def webhook():
     """
@@ -189,6 +190,8 @@ def webhook():
                     mail_id = get_mail_id_from_the_history(id)
                     if mail_id:
                         list_of_saved_files = get_full_message(mail_id)
+                        # proceed with upload to AWS  from here
+
                         print('files',list_of_saved_files)
                 except:
                     http_status = '', 400
@@ -203,3 +206,8 @@ def webhook():
     else:
         http_status='',400
     return http_status
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
