@@ -13,10 +13,10 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from base64 import urlsafe_b64decode
 # TODO(developer)
-project_id = "expanded-symbol-326820"
-subscription_id = "my_sub"
+project_id = "cloud-sub-pub"
+subscription_id = "my_sub_pull"
 #Number of seconds the subscriber should listen for messages
-timeout = 86400
+timeout = 600
 
 
 
@@ -26,18 +26,18 @@ def build_gmail_api_connection():
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
     # time.
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if os.path.exists('/root/flask_gmail-mail/web/token.json'):
+        creds = Credentials.from_authorized_user_file('/root/flask_gmail-mail/web/token.json', SCOPES)
     # If there are no (valid) credentials available, let the user log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
+                '/root/flask_gmail-mail/web/credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
         # Save the credentials for the next run
-        with open('token.json', 'w') as token:
+        with open('/root/flask_gmail-mail/web/token.json', 'w') as token:
             token.write(creds.to_json())
 
     try:
@@ -49,7 +49,7 @@ def build_gmail_api_connection():
 
     return g_mail
 g_mail=build_gmail_api_connection()
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"]="service_credentials.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"]="/root/flask_gmail-mail/web/service_credentials.json"
 
 subscriber = pubsub_v1.SubscriberClient()
 # The `subscription_path` method creates a fully qualified identifier
@@ -87,7 +87,7 @@ def get_full_message(message_id):
     payload = results['payload']
     headers = payload.get("headers")
     parts = payload.get("parts")
-    folder_name = r''
+    folder_name = r'files'
     set_of_files = parse_parts(g_mail, parts, folder_name, results)
     has_subject = False
     if headers:
@@ -173,20 +173,27 @@ def callback(message: pubsub_v1.subscriber.message.Message) -> None:
     # the result of the acknowledge call. When exactly-once delivery is enabled
     # on the subscription, the message is guaranteed to not be delivered again
     # if the ack future succeeds.
-    ack_future = message.ack_with_response()
+
     historyId=json.loads(message.data.decode("utf-8"))["historyId"]
 
-    with open('stored_id.txt', 'r') as f:
+    with open('/root/flask_gmail-mail/web/stored_id.txt', 'r') as f:
         id=f.read()
         if id:
-            mail_id=get_mail_id_from_the_history(id)
-            list_of_saved_files=get_full_message(mail_id)
-            print(list_of_saved_files)
+            try:
+                mail_id = get_mail_id_from_the_history(id)
+                if mail_id:
+                    list_of_saved_files = get_full_message(mail_id)
+                    # proceed with upload to AWS  from here
+
+                    print('files', list_of_saved_files)
+            except:
+                http_status = '', 400
+                return http_status
 
 
-    with open('stored_id.txt', 'w') as f:
+    with open('/root/flask_gmail-mail/web/stored_id.txt', 'w') as f:
         f.write(str(historyId))
-
+    ack_future = message.ack_with_response()
     try:
         # Block on result of acknowledge call.
         # When `timeout` is not set, result() will block indefinitely,
@@ -211,5 +218,6 @@ with subscriber:
     except TimeoutError:
         streaming_pull_future.cancel()  # Trigger the shutdown.
         streaming_pull_future.result()  # Block until the shutdown is complete.
+
 
 

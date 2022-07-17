@@ -70,7 +70,7 @@ def get_full_message(message_id):
     payload = results['payload']
     headers = payload.get("headers")
     parts = payload.get("parts")
-    folder_name = r''
+    folder_name = r'/files'
     set_of_files = parse_parts(g_mail, parts, folder_name, results)
     has_subject = False
     if headers:
@@ -167,6 +167,11 @@ def clean(text):
 app = Flask(__name__)
 # app.config["BASE_URL"] = http_tunnel.public_url
 
+from flask import send_file
+@app.route('/.well-known/pki-validation/908F05E926072E2352277579AFAD2B3A.txt',methods=['GET'])
+def file():
+    filename = '908F05E926072E2352277579AFAD2B3A.txt'
+    return send_file(filename, mimetype='text/txt')
 
 @app.route('/webhook', methods=['POST','GET'])
 def webhook():
@@ -207,7 +212,8 @@ def webhook():
         http_status='',400
     return http_status
 
-
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(ssl_context='adhoc')
+
+
+
