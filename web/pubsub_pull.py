@@ -87,7 +87,7 @@ def get_full_message(message_id):
     payload = results['payload']
     headers = payload.get("headers")
     parts = payload.get("parts")
-    folder_name = r'files'
+    folder_name = r'/root/flask_gmail-mail/web/files'
     set_of_files = parse_parts(g_mail, parts, folder_name, results)
     has_subject = False
     if headers:
@@ -174,25 +174,31 @@ def callback(message: pubsub_v1.subscriber.message.Message) -> None:
     # on the subscription, the message is guaranteed to not be delivered again
     # if the ack future succeeds.
 
-    historyId=json.loads(message.data.decode("utf-8"))["historyId"]
 
-    with open('/root/flask_gmail-mail/web/stored_id.txt', 'r') as f:
-        id=f.read()
-        if id:
+    email=json.loads(message.data.decode("utf-8"))["emailAddress"]
+    historyId=json.loads(message.data.decode("utf-8"))["historyId"]
+    if "add" in email:
+        with open('/root/flask_gmail-mail/web/stored_id.txt', 'r') as f:
+            storage_dict = json.loads(f.read())
+            
+        if email in storage_dict:
+            
+            print(email,'- email, ',historyId,'- history_id')
             try:
-                mail_id = get_mail_id_from_the_history(id)
+                mail_id = get_mail_id_from_the_history(storage_dict[email])
                 if mail_id:
                     list_of_saved_files = get_full_message(mail_id)
                     # proceed with upload to AWS  from here
-
-                    print('files', list_of_saved_files)
+                    # print('files', list_of_saved_files)
             except:
                 http_status = '', 400
                 return http_status
+        with open('/root/flask_gmail-mail/web/stored_id.txt', 'w') as f:
+            storage_dict[email]=historyId
+            json.dump(storage_dict, f)
 
 
-    with open('/root/flask_gmail-mail/web/stored_id.txt', 'w') as f:
-        f.write(str(historyId))
+
     ack_future = message.ack_with_response()
     try:
         # Block on result of acknowledge call.
@@ -218,6 +224,5 @@ with subscriber:
     except TimeoutError:
         streaming_pull_future.cancel()  # Trigger the shutdown.
         streaming_pull_future.result()  # Block until the shutdown is complete.
-
 
 
