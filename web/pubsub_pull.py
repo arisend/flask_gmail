@@ -1,4 +1,5 @@
 import socket
+
 socket.setdefaulttimeout(4000)
 import json
 import os.path
@@ -12,16 +13,25 @@ from google.cloud.pubsub_v1.subscriber import exceptions as sub_exceptions
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from base64 import urlsafe_b64decode
+import requests
+import json
+import os
+from requests.exceptions import HTTPError
+import PyPDF2
+import boto3
+import mimetypes
+
 # TODO(developer)
 project_id = "cloud-sub-pub"
 subscription_id = "my_sub_pull"
-#Number of seconds the subscriber should listen for messages
+folder_name = r'/root/flask_gmail-mail/web/files'
+mock_url = r'https://cd485f9b-bd8f-4db3-81e4-f63abe212a59.mock.pstmn.io/company/company_id'
+# Number of seconds the subscriber should listen for messages
 timeout = 600
 
 
-
 def build_gmail_api_connection():
-    SCOPES = ['https://www.googleapis.com/auth/gmail.readonly','https://www.googleapis.com/auth/pubsub']
+    SCOPES = ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/pubsub']
     creds = None
     # The file token.json stores the user's access and refresh tokens, and is
     # created automatically when the authorization flow completes for the first
@@ -48,13 +58,16 @@ def build_gmail_api_connection():
         print(f'An error occurred: {error}')
 
     return g_mail
-g_mail=build_gmail_api_connection()
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"]="/root/flask_gmail-mail/web/service_credentials.json"
+
+
+g_mail = build_gmail_api_connection()
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/flask_gmail-mail/web/service_credentials.json"
 
 subscriber = pubsub_v1.SubscriberClient()
 # The `subscription_path` method creates a fully qualified identifier
 # in the form `projects/{project_id}/subscriptions/{subscription_id}`
 subscription_path = subscriber.subscription_path(project_id, subscription_id)
+
 
 # utility functions
 def get_size_format(b, factor=1024, suffix="B"):
@@ -75,21 +88,26 @@ def clean(text):
     # clean text for creating a folder
     return "".join(c if c.isalnum() else "_" for c in text)
 
+
 def get_mail_id_from_the_history(last_id):
     print(last_id)
-    results = g_mail.users().history().list(userId='me',startHistoryId=last_id,  labelId="UNREAD", historyTypes=["messageAdded"]).execute()
-    print(last_id,results)
+    results = g_mail.users().history().list(userId='me', startHistoryId=last_id, labelId="UNREAD",
+                                            historyTypes=["messageAdded"]).execute()
+    print(last_id, results)
     time.sleep(2)
     return results['history'][-1]['messages'][-1]["id"]
-def get_full_message(message_id):
-    results=g_mail.users().messages().get(userId='me', id=message_id, format='full').execute()
+
+
+def get_full_message(message_id, save_to_folder=folder_name):
+    results = g_mail.users().messages().get(userId='me', id=message_id, format='full').execute()
     print(results)
     payload = results['payload']
     headers = payload.get("headers")
     parts = payload.get("parts")
-    folder_name = r'/root/flask_gmail-mail/web/files'
-    set_of_files = parse_parts(g_mail, parts, folder_name, results)
+
+    set_of_files = parse_parts(g_mail, parts, save_to_folder, results)
     has_subject = False
+    email_title, email_from, email_date=None,None,None
     if headers:
         for header in headers:
             name = header.get("name")
@@ -97,6 +115,7 @@ def get_full_message(message_id):
             if name.lower() == 'from':
                 # we print the From address
                 print("From:", value)
+                email_from=value
             if name.lower() == "to":
                 # we print the To address
                 print("To:", value)
@@ -104,15 +123,19 @@ def get_full_message(message_id):
                 # make our boolean True, the email has "subject"
                 has_subject = True
                 print("Subject:", value)
+                email_title=value
             if name.lower() == "date":
                 # we print the date when the message was sent
                 print("Date:", value)
-    return set_of_files
+                email_date=value
+    return set_of_files,email_title, email_from, email_date
+
+
 def parse_parts(service, parts, folder_name, message):
     """
     Utility function that parses the content of an email partition
     """
-    set_of_files=set()
+    set_of_files = set()
     if parts:
         for part in parts:
             filename = part.get("filename")
@@ -141,7 +164,7 @@ def parse_parts(service, parts, folder_name, message):
                 # print("Saving HTML to", filepath)
                 # with open(filepath, "wb") as f:
                 #     f.write(urlsafe_b64decode(data))
-                #set_of_files.add(filepath)
+                # set_of_files.add(filepath)
                 #                                                                                <<<<<
 
             else:
@@ -156,7 +179,7 @@ def parse_parts(service, parts, folder_name, message):
                             print("Saving the file:", filename, "size:", get_size_format(file_size))
                             attachment_id = body.get("attachmentId")
                             attachment = service.users().messages() \
-                                        .attachments().get(id=attachment_id, userId='me', messageId=message['id']).execute()
+                                .attachments().get(id=attachment_id, userId='me', messageId=message['id']).execute()
                             data = attachment.get("data")
                             filepath = os.path.join(folder_name, filename)
                             set_of_files.add(filepath)
@@ -166,6 +189,88 @@ def parse_parts(service, parts, folder_name, message):
     return set_of_files
 
 
+def retrieve_company_id(email):
+    params = {'email': email}
+    try:
+        response = requests.get(mock_url, params=params)
+        # If the response was successful, no Exception will be raised
+    except HTTPError as http_err:
+        print(f'HTTP error occurred: {http_err}')
+    except Exception as err:
+        print(f'Other error occurred: {err}')
+    else:
+        try:
+            key = response.json()['company']['id']
+            return key
+        except HTTPError as http_err:
+            print(f'HTTP error occurred: {http_err}')
+        except Exception as err:
+            print(f'Other error occurred: {err}')
+
+def upload_file_and_send_post_notification(path_to_file, key, email_title,email_from,email_date):
+    file_name = os.path.basename(path_to_file)
+    file_extension =os.path.splitext(file_name) in ['.jpg', '.png', '.pdf', ]
+    if file_extension in ['.jpg','.png','.pdf',]:
+        try:
+            #try with boto3, does it handle all formats of files?
+            s3 = boto3.resource('s3')
+            bucket = s3.Bucket('lendica-pod')
+            obj = bucket.Object(f"{key}/invoice/{file_name}")
+            mimetype, _ = mimetypes.guess_type(path_to_file)
+            if mimetype is None:
+                raise Exception("Failed to guess mimetype")
+            elif mimetype=="application/pdf":
+                with open(path_to_file, "rb") as f:
+                    qty_of_pages = str(PyPDF2.PdfFileReader(f).numPages)
+                    obj.upload_file(
+                        Filename=path_to_file,
+                        Bucket=bucket,
+                        Key=f"{key}/invoice/{file_name}",
+                        ExtraArgs={
+                            "ContentType": mimetype,"Metadata": {"numpages": qty_of_pages}
+                        }
+                    )
+            else:
+                obj.upload_file(
+                    Filename=path_to_file,
+                    Bucket=bucket,
+                    Key=f"{key}/invoice/{file_name}",
+                    ExtraArgs={
+                        "ContentType": mimetype,"Metadata": {"numpages": 1}
+                    }
+                )
+            #
+            # with open(path_to_file, 'rb') as data:
+            #     obj.upload_fileobj(data)
+
+            # another option with direct post requst
+            # with open(path_to_file, "rb") as f:
+            #     qty_of_pages = str(PyPDF2.PdfFileReader(f).numPages)
+            #     response = requests.post('https://micro-awsmanager.herokuapp.com/s3/upload-fileobj', files={
+            #         'file_obj': f,
+            #         'json': (None, json.dumps({
+            #             'object_key': f"{key}/invoice/{file_name}",
+            #             'bucket_name': 'lendica-pod',
+            #             'extra_args': {"ContentType": "application/pdf", "Metadata": {"numpages": qty_of_pages}}
+            #         }), 'application/json'),
+            #     })
+
+            response = requests.post('https://webhook.site/05f454b8-bd9a-4485-beb6-d46b26d29039', data={
+                'company_id': key,
+                'object_key': f"{key}/invoice/{file_name}",
+                'email_subject': email_title ,
+                'email_from': email_from,
+                'email_date': email_date
+            })
+            os.remove(path_to_file)
+        except HTTPError as http_err:
+            print(f'HTTP error occurred: {http_err}')
+        except Exception as err:
+            print(f'Other error occurred: {err}')
+    else:
+        os.remove(path_to_file)
+    return response
+
 def callback(message: pubsub_v1.subscriber.message.Message) -> None:
     print(f"Received {message}.")
 
@@ -174,30 +279,29 @@ def callback(message: pubsub_v1.subscriber.message.Message) -> None:
     # on the subscription, the message is guaranteed to not be delivered again
     # if the ack future succeeds.
 
-
-    email=json.loads(message.data.decode("utf-8"))["emailAddress"]
-    historyId=json.loads(message.data.decode("utf-8"))["historyId"]
+    email = json.loads(message.data.decode("utf-8"))["emailAddress"]
+    historyId = json.loads(message.data.decode("utf-8"))["historyId"]
     if "add" in email:
         with open('/root/flask_gmail-mail/web/stored_id.txt', 'r') as f:
             storage_dict = json.loads(f.read())
-            
         if email in storage_dict:
-            
-            print(email,'- email, ',historyId,'- history_id')
+            print(email, '- email, ', historyId, '- history_id')
             try:
                 mail_id = get_mail_id_from_the_history(storage_dict[email])
                 if mail_id:
-                    list_of_saved_files = get_full_message(mail_id)
+                    list_of_saved_files,email_title, email_from, email_date = get_full_message(mail_id)
+                    key=retrieve_company_id(email)
+                    for file in list_of_saved_files:
+                        response=upload_file_and_send_post_notification(file, key, email_title,email_from,email_date)
+                        print(response.text)
                     # proceed with upload to AWS  from here
                     # print('files', list_of_saved_files)
             except:
                 http_status = '', 400
                 return http_status
         with open('/root/flask_gmail-mail/web/stored_id.txt', 'w') as f:
-            storage_dict[email]=historyId
+            storage_dict[email] = historyId
             json.dump(storage_dict, f)
-
-
 
     ack_future = message.ack_with_response()
     try:
@@ -224,5 +328,4 @@ with subscriber:
     except TimeoutError:
         streaming_pull_future.cancel()  # Trigger the shutdown.
         streaming_pull_future.result()  # Block until the shutdown is complete.
-
 
