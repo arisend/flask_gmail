@@ -20,6 +20,7 @@ from requests.exceptions import HTTPError
 import PyPDF2
 import boto3
 import mimetypes
+import datetime
 
 # TODO(developer)
 project_id = "cloud-sub-pub"
@@ -127,7 +128,7 @@ def get_full_message(message_id, save_to_folder=folder_name):
             if name.lower() == "date":
                 # we print the date when the message was sent
                 print("Date:", value)
-                email_date=value
+                email_date=datetime.datetime.strptime(value, '%a, %d %b %Y %H:%M:%S %z')  # for ref. Fri, 29 Jul 2022 18:14:45 +0300
     return set_of_files,email_title, email_from, email_date
 
 
@@ -209,67 +210,62 @@ def retrieve_company_id(email):
 
 def upload_file_and_send_post_notification(path_to_file, key, email_title,email_from,email_date):
     file_name = os.path.basename(path_to_file)
-    file_extension =os.path.splitext(file_name) in ['.jpg', '.png', '.pdf', ]
-    if file_extension in ['.jpg','.png','.pdf',]:
-        try:
+    file_extension =os.path.splitext(file_name)[-1]
+    print('file - ', file_name)
+    if file_extension in ['.jpg','.png','.pdf']:
+        obj=None
+        mimetype=None
+        #try:
             #try with boto3, does it handle all formats of files?
-            s3 = boto3.resource('s3')
-            bucket = s3.Bucket('lendica-pod')
-            obj = bucket.Object(f"{key}/invoice/{file_name}")
-            mimetype, _ = mimetypes.guess_type(path_to_file)
-            if mimetype is None:
-                raise Exception("Failed to guess mimetype")
-            elif mimetype=="application/pdf":
-                with open(path_to_file, "rb") as f:
-                    qty_of_pages = str(PyPDF2.PdfFileReader(f).numPages)
-                    obj.upload_file(
-                        Filename=path_to_file,
-                        Bucket=bucket,
-                        Key=f"{key}/invoice/{file_name}",
-                        ExtraArgs={
-                            "ContentType": mimetype,"Metadata": {"numpages": qty_of_pages}
-                        }
-                    )
-            else:
-                obj.upload_file(
-                    Filename=path_to_file,
-                    Bucket=bucket,
-                    Key=f"{key}/invoice/{file_name}",
-                    ExtraArgs={
-                        "ContentType": mimetype,"Metadata": {"numpages": 1}
-                    }
-                )
-            #
-            # with open(path_to_file, 'rb') as data:
-            #     obj.upload_fileobj(data)
+        s3 = boto3.resource('s3')
+        bucket = s3.Bucket('lendica-pod')
+        obj = bucket.Object(f"{key}/invoice/{file_name}")
+        mimetype, _ = mimetypes.guess_type(path_to_file)
+        print('mimetype', mimetype)
+        if mimetype is None:
+            print('failed to guess mimetype or file removed')
+            return 
+        elif mimetype=="application/pdf":
+            with open(path_to_file, "rb") as f:
+                qty_of_pages = str(PyPDF2.PdfFileReader(f).numPages)
+                response = requests.post('https://micro-awsmanager.herokuapp.com/s3/upload-fileobj', files={
+                    'file_obj': f,
+                    'json': (None, json.dumps({
+                        'object_key': f"{key}/invoice/{file_name}",
+                        'bucket_name': 'lendica-pod',
+                        'extra_args': {"ContentType": mimetype, "Metadata": {"numpages": qty_of_pages}}
+                    }), 'application/json'),
+                })
+                print('uploaded!')
+        else:
+            with open(path_to_file, "rb") as f:
+                response = requests.post('https://micro-awsmanager.herokuapp.com/s3/upload-fileobj', files={
+                    'file_obj': f,
+                    'json': (None, json.dumps({
+                        'object_key': f"{key}/invoice/{file_name}",
+                        'bucket_name': 'lendica-pod',
+                        'extra_args': {"ContentType": mimetype, "Metadata": {"numpages": 1}}
+                    }), 'application/json'),
+                })
+                print('uploaded!')
 
-            # another option with direct post requst
-            # with open(path_to_file, "rb") as f:
-            #     qty_of_pages = str(PyPDF2.PdfFileReader(f).numPages)
-            #     response = requests.post('https://micro-awsmanager.herokuapp.com/s3/upload-fileobj', files={
-            #         'file_obj': f,
-            #         'json': (None, json.dumps({
-            #             'object_key': f"{key}/invoice/{file_name}",
-            #             'bucket_name': 'lendica-pod',
-            #             'extra_args': {"ContentType": "application/pdf", "Metadata": {"numpages": qty_of_pages}}
-            #         }), 'application/json'),
-            #     })
-
-            response = requests.post('https://webhook.site/05f454b8-bd9a-4485-beb6-d46b26d29039', data={
-                'company_id': key,
-                'object_key': f"{key}/invoice/{file_name}",
-                'email_subject': email_title ,
-                'email_from': email_from,
-                'email_date': email_date
-            })
-            os.remove(path_to_file)
-        except HTTPError as http_err:
-            print(f'HTTP error occurred: {http_err}')
-        except Exception as err:
-            print(f'Other error occurred: {err}')
+        response = requests.post('https://webhook.site/05f454b8-bd9a-4485-beb6-d46b26d29039', data={
+            'company_id': key,
+            'object_key': f"{key}/invoice/{file_name}",
+            'email_subject': email_title ,
+            'email_from': email_from,
+            'email_date': email_date.strftime("%Y-%m-%dT%H:%M:%S%z")  # for ref. 2022-07-14T13:15:03-08:00'
+        })
+        os.remove(path_to_file)
+        print(response.status_code)
+        return
+        # except HTTPError as http_err:
+        #     print(f'HTTP error occurred: {http_err}')
+        # except Exception as err:
+        #     print(f'Other error occurred: {err}')
     else:
         os.remove(path_to_file)
-    return response
+    
 
 def callback(message: pubsub_v1.subscriber.message.Message) -> None:
     print(f"Received {message}.")
@@ -286,19 +282,26 @@ def callback(message: pubsub_v1.subscriber.message.Message) -> None:
             storage_dict = json.loads(f.read())
         if email in storage_dict:
             print(email, '- email, ', historyId, '- history_id')
+            mail_id=None
             try:
                 mail_id = get_mail_id_from_the_history(storage_dict[email])
-                if mail_id:
-                    list_of_saved_files,email_title, email_from, email_date = get_full_message(mail_id)
-                    key=retrieve_company_id(email)
-                    for file in list_of_saved_files:
-                        response=upload_file_and_send_post_notification(file, key, email_title,email_from,email_date)
-                        print(response.text)
-                    # proceed with upload to AWS  from here
-                    # print('files', list_of_saved_files)
             except:
                 http_status = '', 400
                 return http_status
+            if mail_id:
+                    list_of_saved_files=None
+                    try:
+                        list_of_saved_files,email_title, email_from, email_date = get_full_message(mail_id)
+                    except:
+                        http_status = '', 400
+                        return http_status 
+                    if list_of_saved_files:
+                        key=retrieve_company_id(email)
+                        print('key - ', key)
+                        for file in list_of_saved_files:
+                            response=upload_file_and_send_post_notification(file, key, email_title,email_from,email_date)   
+                    # proceed with upload to AWS  from here
+                    # print('files', list_of_saved_files)
         with open('/root/flask_gmail-mail/web/stored_id.txt', 'w') as f:
             storage_dict[email] = historyId
             json.dump(storage_dict, f)
@@ -328,4 +331,3 @@ with subscriber:
     except TimeoutError:
         streaming_pull_future.cancel()  # Trigger the shutdown.
         streaming_pull_future.result()  # Block until the shutdown is complete.
-
