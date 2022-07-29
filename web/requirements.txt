@@ -13,3 +13,5 @@ flask_ngrok
 #pip install --upgrade oauth2client
 google-cloud-pubsub
 google-cloud
+PyPDF2
+boto3
