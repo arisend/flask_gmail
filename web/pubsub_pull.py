@@ -21,7 +21,11 @@ import PyPDF2
 import boto3
 import mimetypes
 import datetime
+import logging
 
+logging.basicConfig(filename='std.log', filemode='w', format='%(name)s - %(levelname)s - %(message)s')
+logger=logging.getLogger()
+logger.setLevel(logging.DEBUG)
 # TODO(developer)
 project_id = "cloud-sub-pub"
 subscription_id = "my_sub_pull"
@@ -91,17 +95,17 @@ def clean(text):
 
 
 def get_mail_id_from_the_history(last_id):
-    print(last_id)
+    logger.debug(f"{str(last_id)}- last_id")
     results = g_mail.users().history().list(userId='me', startHistoryId=last_id, labelId="UNREAD",
                                             historyTypes=["messageAdded"]).execute()
-    print(last_id, results)
+    #print(last_id, results)
     time.sleep(2)
     return results['history'][-1]['messages'][-1]["id"]
 
 
 def get_full_message(message_id, save_to_folder=folder_name):
     results = g_mail.users().messages().get(userId='me', id=message_id, format='full').execute()
-    print(results)
+    #print(results)
     payload = results['payload']
     headers = payload.get("headers")
     parts = payload.get("parts")
@@ -115,19 +119,19 @@ def get_full_message(message_id, save_to_folder=folder_name):
             value = header.get("value")
             if name.lower() == 'from':
                 # we print the From address
-                print("From:", value)
+                logger.debug(f"From:{value}")
                 email_from=value
             if name.lower() == "to":
                 # we print the To address
-                print("To:", value)
+                logger.debug(f"To:{value}")
             if name.lower() == "subject":
                 # make our boolean True, the email has "subject"
                 has_subject = True
-                print("Subject:", value)
+                logger.debug(f"Subject:{value}")
                 email_title=value
             if name.lower() == "date":
                 # we print the date when the message was sent
-                print("Date:", value)
+                logger.debug(f"Date:{value}")
                 email_date=datetime.datetime.strptime(value, '%a, %d %b %Y %H:%M:%S %z')  # for ref. Fri, 29 Jul 2022 18:14:45 +0300
     return set_of_files,email_title, email_from, email_date
 
@@ -177,7 +181,7 @@ def parse_parts(service, parts, folder_name, message):
                         if "attachment" in part_header_value:
                             # we get the attachment ID
                             # and make another request to get the attachment itself
-                            print("Saving the file:", filename, "size:", get_size_format(file_size))
+                            logger.debug(f"Saving the file: {filename}, size: {get_size_format(file_size)}")
                             attachment_id = body.get("attachmentId")
                             attachment = service.users().messages() \
                                 .attachments().get(id=attachment_id, userId='me', messageId=message['id']).execute()
@@ -196,22 +200,22 @@ def retrieve_company_id(email):
         response = requests.get(mock_url, params=params)
         # If the response was successful, no Exception will be raised
     except HTTPError as http_err:
-        print(f'HTTP error occurred: {http_err}')
+        logger.error(f'HTTP error occurred: {http_err}')
     except Exception as err:
-        print(f'Other error occurred: {err}')
+        logger.error(f'Other error occurred: {err}')
     else:
         try:
             key = response.json()['company']['id']
             return key
         except HTTPError as http_err:
-            print(f'HTTP error occurred: {http_err}')
+            logger.error(f'HTTP error occurred: {http_err}')
         except Exception as err:
-            print(f'Other error occurred: {err}')
+            logger.error(f'Other error occurred: {err}')
 
 def upload_file_and_send_post_notification(path_to_file, key, email_title,email_from,email_date):
     file_name = os.path.basename(path_to_file)
     file_extension =os.path.splitext(file_name)[-1]
-    print('file - ', file_name)
+    logger.debug(f"file - {file_name}")
     if file_extension in ['.jpg','.png','.pdf']:
         obj=None
         mimetype=None
@@ -221,9 +225,9 @@ def upload_file_and_send_post_notification(path_to_file, key, email_title,email_
         bucket = s3.Bucket('lendica-pod')
         obj = bucket.Object(f"{key}/invoice/{file_name}")
         mimetype, _ = mimetypes.guess_type(path_to_file)
-        print('mimetype', mimetype)
+        logger.debug(f"mimetype {mimetype}")
         if mimetype is None:
-            print('failed to guess mimetype or file removed')
+            logger.error('failed to guess mimetype or file removed')
             return 
         elif mimetype=="application/pdf":
             with open(path_to_file, "rb") as f:
@@ -236,7 +240,8 @@ def upload_file_and_send_post_notification(path_to_file, key, email_title,email_
                         'extra_args': {"ContentType": mimetype, "Metadata": {"numpages": qty_of_pages}}
                     }), 'application/json'),
                 })
-                print('uploaded!')
+                logger.debug(f"{str(response.status_code)} - s3 response status code")
+                logger.debug(response.text)
         else:
             with open(path_to_file, "rb") as f:
                 response = requests.post('https://micro-awsmanager.herokuapp.com/s3/upload-fileobj', files={
@@ -247,7 +252,8 @@ def upload_file_and_send_post_notification(path_to_file, key, email_title,email_
                         'extra_args': {"ContentType": mimetype, "Metadata": {"numpages": 1}}
                     }), 'application/json'),
                 })
-                print('uploaded!')
+                logger.debug(f"{str(response.status_code)} - s3 response status code")
+                logger.debug(response.text)
 
         response = requests.post('https://webhook.site/05f454b8-bd9a-4485-beb6-d46b26d29039', data={
             'company_id': key,
@@ -257,7 +263,7 @@ def upload_file_and_send_post_notification(path_to_file, key, email_title,email_
             'email_date': email_date.strftime("%Y-%m-%dT%H:%M:%S%z")  # for ref. 2022-07-14T13:15:03-08:00'
         })
         os.remove(path_to_file)
-        print(response.status_code)
+        logger.debug(f"{str(response.status_code)} - webhook response status code")
         return
         # except HTTPError as http_err:
         #     print(f'HTTP error occurred: {http_err}')
@@ -281,10 +287,11 @@ def callback(message: pubsub_v1.subscriber.message.Message) -> None:
         with open('/root/flask_gmail-mail/web/stored_id.txt', 'r') as f:
             storage_dict = json.loads(f.read())
         if email in storage_dict:
-            print(email, '- email, ', historyId, '- history_id')
+            logger.debug(f"{email} - email, {str(historyId)}, - history_id")
             mail_id=None
             try:
                 mail_id = get_mail_id_from_the_history(storage_dict[email])
+                logger.debug(f"{mail_id}, - mail_id")
             except:
                 http_status = '', 400
                 return http_status
@@ -297,11 +304,10 @@ def callback(message: pubsub_v1.subscriber.message.Message) -> None:
                         return http_status 
                     if list_of_saved_files:
                         key=retrieve_company_id(email)
-                        print('key - ', key)
+                        logger.debug(f"key - {key}")
                         for file in list_of_saved_files:
                             response=upload_file_and_send_post_notification(file, key, email_title,email_from,email_date)   
-                    # proceed with upload to AWS  from here
-                    # print('files', list_of_saved_files)
+
         with open('/root/flask_gmail-mail/web/stored_id.txt', 'w') as f:
             storage_dict[email] = historyId
             json.dump(storage_dict, f)
@@ -312,9 +318,9 @@ def callback(message: pubsub_v1.subscriber.message.Message) -> None:
         # When `timeout` is not set, result() will block indefinitely,
         # unless an exception is encountered first.
         ack_future.result(timeout=timeout)
-        print(f"Ack for message {message.message_id} successful.")
+        logger.debug(f"Ack for message {message.message_id} successful.")
     except sub_exceptions.AcknowledgeError as e:
-        print(
+        logger.error(
             f"Ack for message {message.message_id} failed with error: {e.error_code}"
         )
 
